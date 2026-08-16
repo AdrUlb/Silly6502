@@ -61,11 +61,13 @@ public sealed partial class MOS6502
 	private bool _requestIrq, _nextRequestIrq;
 	private bool _requestNmi, _nextRequestNmi;
 	private bool _ready, _nextReady;
+	private bool _addressEnable, _nextAddressEnable;
 
 	public bool RequestIrq { get => _requestIrq; set => _nextRequestIrq = value; }
 	public bool RequestNmi { get => _requestNmi; set => _nextRequestNmi = value; }
 	public bool Ready { get => _ready; set => _nextReady = value; }
 	public bool Sync { get; private set; }
+	public bool AddressEnable { get => _addressEnable; set => _nextAddressEnable = value; }
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public void Reset()
@@ -73,6 +75,7 @@ public sealed partial class MOS6502
 		_requestIrq = _nextRequestIrq = false;
 		_requestNmi = _nextRequestNmi = false;
 		_ready = _nextReady = true;
+		_addressEnable = _nextAddressEnable = true;
 
 		_latchReset = true;
 		_latchNmi = false;
@@ -83,18 +86,32 @@ public sealed partial class MOS6502
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private byte Read(ushort address)
 	{
+		if (!AddressEnable)
+		{
+			BusRead = false;
+			BusAddress = 0xFFFF;
+			return 0xFF;
+		}
+
 		BusRead = true;
 		BusAddress = address;
 		return BusData = _bus.Read(address);
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void Write(ushort address, byte value)
+	private void Write(ushort address, byte data)
 	{
+		if (!AddressEnable)
+		{
+			BusRead = false;
+			BusAddress = 0xFFFF;
+			BusData = data;
+		}
+
 		BusRead = false;
 		BusAddress = address;
-		BusData = value;
-		_bus.Write(address, value);
+		BusData = data;
+		_bus.Write(address, data);
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -131,9 +148,11 @@ public sealed partial class MOS6502
 		_requestIrq = _nextRequestIrq;
 		_requestNmi = _nextRequestNmi;
 		_ready = _nextReady;
+		_addressEnable = _nextAddressEnable;
 		_nextRequestIrq = false;
 		_nextRequestNmi = false;
 		_nextReady = true; // Internal pull-up
+		_nextAddressEnable = true;
 
 		if (_step == 1)
 		{
