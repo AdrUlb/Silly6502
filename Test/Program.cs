@@ -106,8 +106,8 @@ void RunTest(TestDataTest test)
 		cpu.Tick();
 		cycles++;
 
-		if (cycle.Operation == TestDataBusOperation.Write != cpu.BusWrite)
-			throw new($"Bus operation was {(cpu.BusWrite ? "write" : "read")}, should have been {(cycle.Operation == TestDataBusOperation.Read ? "read" : "write")}");
+		if (cycle.Operation == TestDataBusOperation.Read != cpu.BusRead)
+			throw new($"Bus operation was {(cpu.BusRead ? "read" : "write")}, should have been {(cycle.Operation == TestDataBusOperation.Read ? "read" : "write")}");
 
 		if (cpu.BusAddress != cycle.Address)
 			throw new($"Bus address was 0x{cpu.BusAddress:X4}, should have been 0x{cycle.Address:X4}");

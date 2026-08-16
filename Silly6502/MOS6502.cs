@@ -30,7 +30,7 @@ public sealed partial class MOS6502
 	public bool FlagOverflow { get => RegStatus.GetBit(6); set => RegStatus = RegStatus.SetBit(6, value); }
 	public bool FlagNegative { get => RegStatus.GetBit(7); set => RegStatus = RegStatus.SetBit(7, value); }
 
-	public bool BusWrite { get; private set; }
+	public bool BusRead { get; private set; }
 	public ushort BusAddress { get; private set; }
 	public byte BusData { get; private set; }
 
@@ -83,7 +83,7 @@ public sealed partial class MOS6502
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private byte Read(ushort address)
 	{
-		BusWrite = false;
+		BusRead = true;
 		BusAddress = address;
 		return BusData = _bus.Read(address);
 	}
@@ -91,7 +91,7 @@ public sealed partial class MOS6502
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private void Write(ushort address, byte value)
 	{
-		BusWrite = true;
+		BusRead = false;
 		BusAddress = address;
 		BusData = value;
 		_bus.Write(address, value);
