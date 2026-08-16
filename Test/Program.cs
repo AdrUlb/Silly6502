@@ -72,7 +72,7 @@ void RunTest(TestDataTest test)
 
 	// Every time an instruction finishes executing, the done flag is set to false
 	var done = false;
-	cpu.InstructionFinished += (_, _) => done = true;
+	cpu.InstructionFinished += () => done = true;
 
 	// Set reset vector to target PC and reset the CPU
 	bus.Ram[CPU.VectorReset] = (byte)test.InitialState.RegPC.GetBits(0, 0xFF);

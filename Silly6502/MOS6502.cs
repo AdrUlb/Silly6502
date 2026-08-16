@@ -6,11 +6,12 @@ namespace Silly6502;
 
 public sealed partial class MOS6502
 {
+
 	public const ushort VectorIrq = 0xFFFE;
 	public const ushort VectorNmi = 0xFFFA;
 	public const ushort VectorReset = 0xFFFC;
 
-	public event EventHandler? InstructionFinished;
+	public event Action? InstructionFinished;
 
 	private byte _regA;
 
@@ -30,9 +31,13 @@ public sealed partial class MOS6502
 	public bool FlagOverflow { get => RegStatus.GetBit(6); set => RegStatus = RegStatus.SetBit(6, value); }
 	public bool FlagNegative { get => RegStatus.GetBit(7); set => RegStatus = RegStatus.SetBit(7, value); }
 
+	public bool Enable6510Ports { get; }
 	public bool BusRead { get; private set; }
 	public ushort BusAddress { get; private set; }
 	public byte BusData { get; private set; }
+	public byte PortDataIn { get; set; }
+	public byte PortDataOut { get; private set; }
+	public byte RegDataDir { get; set; }
 
 	private readonly IAddressBus _bus;
 
@@ -51,9 +56,10 @@ public sealed partial class MOS6502
 	private byte _tempValue;
 	private bool _pageBoundaryCrossed;
 
-	public MOS6502(IAddressBus bus)
+	public MOS6502(IAddressBus bus, bool enable6510Ports = false)
 	{
 		_bus = bus;
+		Enable6510Ports = enable6510Ports;
 		Reset();
 	}
 
@@ -88,14 +94,31 @@ public sealed partial class MOS6502
 	{
 		if (!AddressEnable)
 		{
-			BusRead = false;
+			BusRead = true;
 			BusAddress = 0xFFFF;
-			return 0xFF;
+			BusData = 0xFF;
+		}
+		else
+		{
+
+			BusRead = true;
+			BusAddress = address;
+			BusData = _bus.Read(address);
 		}
 
-		BusRead = true;
-		BusAddress = address;
-		return BusData = _bus.Read(address);
+		if (!Enable6510Ports)
+			return BusData;
+
+		switch (address)
+		{
+			case 0:
+				return RegDataDir;
+			case 1:
+				return (byte)((PortDataIn & ~RegDataDir) | (PortDataOut & RegDataDir));
+			default:
+				return BusData;
+		}
+
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -107,11 +130,27 @@ public sealed partial class MOS6502
 			BusAddress = 0xFFFF;
 			BusData = data;
 		}
+		else
+		{
 
-		BusRead = false;
-		BusAddress = address;
-		BusData = data;
-		_bus.Write(address, data);
+			BusRead = false;
+			BusAddress = address;
+			BusData = data;
+			_bus.Write(address, data);
+		}
+
+		if (!Enable6510Ports)
+			return;
+
+		switch (address)
+		{
+			case 0:
+				RegDataDir = data;
+				break;
+			case 1:
+				PortDataOut = data;
+				break;
+		}
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -126,7 +165,7 @@ public sealed partial class MOS6502
 		_brkIrq = _latchReset || _latchNmi || (RequestIrq && !FlagInterruptDisable);
 
 		Sync = true;
-		InstructionFinished?.Invoke(this, EventArgs.Empty);
+		InstructionFinished?.Invoke();
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
