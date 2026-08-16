@@ -30,9 +30,7 @@ foreach (var filePath in files)
 	{
 		try
 		{
-			sw.Start();
 			RunTest(test);
-			sw.Stop();
 		}
 		catch (Exception ex)
 		{
@@ -98,6 +96,8 @@ void RunTest(TestDataTest test)
 	foreach (var ram in test.InitialState.Ram)
 		bus.Ram[ram.Address] = ram.Value;
 
+	sw.Start();
+	
 	foreach (var cycle in test.Cycles)
 	{
 		done = false;
@@ -116,6 +116,7 @@ void RunTest(TestDataTest test)
 			throw new($"Bus data was 0x{cpu.BusData:X2}, should have been 0x{cycle.Data:X2}");
 	}
 
+	sw.Stop();
 	/*
 	if (!done)
 		throw new("Expected end of instruction on last test cycle.");

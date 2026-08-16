@@ -60,13 +60,20 @@ public sealed partial class MOS6502
 	// The IRQ line must be continuously asserted every tick until the interrupt has been acknowledged, it is reset after every tick.
 	private bool _requestIrq, _nextRequestIrq;
 	private bool _requestNmi, _nextRequestNmi;
+	private bool _ready, _nextReady;
 
 	public bool RequestIrq { get => _requestIrq; set => _nextRequestIrq = value; }
 	public bool RequestNmi { get => _requestNmi; set => _nextRequestNmi = value; }
+	public bool Ready { get => _ready; set => _nextReady = value; }
+	public bool Sync { get; private set; }
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public void Reset()
 	{
+		_requestIrq = _nextRequestIrq = false;
+		_requestNmi = _nextRequestNmi = false;
+		_ready = _nextReady = true;
+
 		_latchReset = true;
 		_latchNmi = false;
 		_brkIrq = true;
@@ -101,18 +108,19 @@ public sealed partial class MOS6502
 		// Determine if an interrupt must be serviced
 		_brkIrq = _latchReset || _latchNmi || (RequestIrq && !FlagInterruptDisable);
 
+		Sync = true;
 		InstructionFinished?.Invoke(this, EventArgs.Empty);
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	void SetResultFlags(byte result)
+	private void SetResultFlags(byte result)
 	{
 		FlagNegative = result.GetBit(7);
 		FlagZero = result == 0;
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	void SetOverflowFlag(byte a, byte b, int result) => FlagOverflow = (result & 0x80) != (a & 0x80) && (result & 0x80) != (b & 0x80);
+	private void SetOverflowFlag(byte a, byte b, int result) => FlagOverflow = (result & 0x80) != (a & 0x80) && (result & 0x80) != (b & 0x80);
 
 	public void Tick()
 	{
@@ -122,14 +130,21 @@ public sealed partial class MOS6502
 
 		_requestIrq = _nextRequestIrq;
 		_requestNmi = _nextRequestNmi;
+		_ready = _nextReady;
 		_nextRequestIrq = false;
 		_nextRequestNmi = false;
+		_nextReady = true; // Internal pull-up
 
 		if (_step == 1)
 		{
 			// The next opcode is fetched, PC is incremented immediately
-			var opcode = Read(RegPC++);
+			var opcode = Read(RegPC);
+			if (!_ready)
+				return;
+
 			_brkOp = opcode == 0x00;
+
+			RegPC++;
 
 			// If we should be servicing an interrupt, the operation is forced to BRK and the PC increment is suppressed
 			if (_brkIrq)
@@ -143,6 +158,8 @@ public sealed partial class MOS6502
 			_instruction = Instruction.FromOpcode(opcode);
 
 			_pageBoundaryCrossed = false;
+
+			Sync = false;
 		}
 
 		TickInstruction();
@@ -183,6 +200,10 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+
+						if (!_ready)
+							break;
+
 						if (_brkOp)
 							RegPC++;
 
@@ -194,7 +215,11 @@ public sealed partial class MOS6502
 							Write(RegSP, (byte)RegPC.GetBits(8, 0xFF));
 						}
 						else
+						{
 							Read(RegSP);
+							if (!_ready)
+								break;
+						}
 
 						RegSPLow--;
 						Step();
@@ -205,7 +230,11 @@ public sealed partial class MOS6502
 							Write(RegSP, (byte)RegPC.GetBits(0, 0xFF));
 						}
 						else
+						{
 							Read(RegSP);
+							if (!_ready)
+								break;
+						}
 
 						RegSPLow--;
 						Step();
@@ -217,7 +246,11 @@ public sealed partial class MOS6502
 							Write(RegSP, RegStatus.SetBit(4, !_brkIrq));
 						}
 						else
+						{
 							Read(RegSP);
+							if (!_ready)
+								break;
+						}
 
 						RegSPLow--;
 
@@ -241,16 +274,29 @@ public sealed partial class MOS6502
 						break;
 					}
 					case 6:
-						RegPC = RegPC.SetBits(0, 0xFF, Read(_brkVec++));
+					{
+						var value = Read(_brkVec);
+						if (!_ready)
+							break;
+
+						_brkVec++;
+						RegPC = RegPC.SetBits(0, 0xFF, value);
 						Step();
 						break;
+					}
 					case 7:
-						RegPC = RegPC.SetBits(8, 0xFF, Read(_brkVec++));
+					{
+						var value = Read(_brkVec);
+						if (!_ready)
+							break;
 
+
+						_brkVec++;
+						RegPC = RegPC.SetBits(8, 0xFF, value);
 						_brkIrq = false;
-
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -263,8 +309,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagCarry = false;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagCarry = false;
 						End();
 						break;
 					default:
@@ -279,8 +328,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagDecimal = false;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagDecimal = false;
 						End();
 						break;
 					default:
@@ -295,8 +347,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagInterruptDisable = false;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagInterruptDisable = false;
 						End();
 						break;
 					default:
@@ -311,8 +366,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagOverflow = false;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagOverflow = false;
 						End();
 						break;
 					default:
@@ -329,6 +387,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegX--;
 						SetResultFlags(RegX);
 						End();
@@ -348,6 +409,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegY--;
 						SetResultFlags(RegY);
 						End();
@@ -367,6 +431,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegX++;
 						SetResultFlags(RegX);
 						End();
@@ -386,6 +453,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegY++;
 						SetResultFlags(RegY);
 						End();
@@ -405,6 +475,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						End();
 						break;
 					default:
@@ -421,6 +494,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
@@ -441,6 +517,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
@@ -461,18 +540,30 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
 						Read(RegSP);
+						if (!_ready)
+							break;
+
 						RegSPLow++;
 						Step();
 						break;
 					case 4:
-						RegA = Read(RegSP);
+					{
+						var value = Read(RegSP);
+						if (!_ready)
+							break;
+
+						RegA = value;
 						SetResultFlags(RegA);
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -486,17 +577,29 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
 						Read(RegSP);
+						if (!_ready)
+							break;
+
 						RegSPLow++;
 						Step();
 						break;
 					case 4:
-						RegStatus = Read(RegSP).SetBit(4, false).SetBit(5, true);
+					{
+						var value = Read(RegSP).SetBit(4, false).SetBit(5, true);
+						if (!_ready)
+							break;
+
+						RegStatus = value;
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -510,27 +613,51 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
 						Read(RegSP);
+						if (!_ready)
+							break;
+
 						RegSPLow++;
 						Step();
 						break;
 					case 4:
-						RegStatus = Read(RegSP).SetBit(4, false).SetBit(5, true);
+					{
+						var value = Read(RegSP).SetBit(4, false).SetBit(5, true);
+						if (!_ready)
+							break;
+
+						RegStatus = value;
 						RegSPLow++;
 						Step();
 						break;
+					}
 					case 5:
-						RegPC = Read(RegSP);
+					{
+						var value = Read(RegSP);
+						if (!_ready)
+							break;
+
+						RegPC = value;
 						RegSPLow++;
 						Step();
 						break;
+					}
 					case 6:
-						RegPC = RegPC.SetBits(8, 0xFF, Read(RegSP));
+					{
+						var value = Read(RegSP);
+						if (!_ready)
+							break;
+
+						RegPC = RegPC.SetBits(8, 0xFF, value);
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -544,24 +671,42 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
 						Read(RegSP);
+						if (!_ready)
+							break;
+
 						RegSPLow++;
 						Step();
 						break;
 					case 4:
 						RegPC = Read(RegSP);
+						if (!_ready)
+							break;
+
 						RegSPLow++;
 						Step();
 						break;
 					case 5:
-						RegPC = RegPC.SetBits(8, 0xFF, Read(RegSP));
+					{
+						var value = Read(RegSP);
+						if (!_ready)
+							break;
+
+						RegPC = RegPC.SetBits(8, 0xFF, value);
 						Step();
 						break;
+					}
 					case 6:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegPC++;
 						End();
 						break;
@@ -577,8 +722,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagCarry = true;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagCarry = true;
 						End();
 						break;
 					default:
@@ -593,8 +741,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagDecimal = true;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagDecimal = true;
 						End();
 						break;
 					default:
@@ -609,8 +760,11 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						FlagInterruptDisable = true;
 						Read(RegPC);
+						if (!_ready)
+							break;
+
+						FlagInterruptDisable = true;
 						End();
 						break;
 					default:
@@ -626,6 +780,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegX = RegA;
 						SetResultFlags(RegX);
 						End();
@@ -643,6 +800,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegY = RegA;
 						SetResultFlags(RegY);
 						End();
@@ -660,6 +820,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegX = RegSPLow;
 						SetResultFlags(RegX);
 						End();
@@ -677,6 +840,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegA = RegX;
 						SetResultFlags(RegA);
 						End();
@@ -694,6 +860,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegSPLow = RegX;
 						End();
 						break;
@@ -710,6 +879,9 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						RegA = RegY;
 						SetResultFlags(RegA);
 						End();
@@ -729,15 +901,24 @@ public sealed partial class MOS6502
 						break;
 					case 2:
 						Read(RegPC);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 3:
 						Read(0xFFFF);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 4:
 					case 5:
 						Read(0xFFFE);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 6:
@@ -763,6 +944,9 @@ public sealed partial class MOS6502
 				break;
 			case 2:
 				Read(RegPC);
+				if (!_ready)
+					break;
+
 				_tempValue = RegA;
 				DoOp();
 				RegA = _tempValue;
@@ -782,7 +966,11 @@ public sealed partial class MOS6502
 				Step();
 				break;
 			case 2:
-				_tempValue = Read(RegPC++);
+				_tempValue = Read(RegPC);
+				if (!_ready)
+					break;
+
+				RegPC++;
 				DoOp();
 				End();
 				break;
@@ -801,7 +989,11 @@ public sealed partial class MOS6502
 				break;
 			case 2:
 			{
-				_tempValue = Read(RegPC++);
+				_tempValue = Read(RegPC);
+				if (!_ready)
+					break;
+
+				RegPC++;
 
 				var condition = _instruction.Operation switch
 				{
@@ -825,6 +1017,9 @@ public sealed partial class MOS6502
 			}
 			case 3:
 				Read(RegPC);
+				if (!_ready)
+					break;
+
 				_tempAddress = (ushort)(RegPC + (sbyte)_tempValue);
 				RegPC = RegPC.SetBits(0, 0xFF, _tempAddress.GetBits(0, 0xFF));
 
@@ -836,6 +1031,9 @@ public sealed partial class MOS6502
 			case 4:
 				_pageBoundaryCrossed = true;
 				Read(RegPC);
+				if (!_ready)
+					break;
+
 				RegPC = RegPC.SetBits(8, 0xFF, _tempAddress.GetBits(8, 0xFF));
 				End();
 				break;
@@ -856,13 +1054,26 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
-						RegPC = _tempAddress.SetBits(8, 0xFF, Read(RegPC));
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC = _tempAddress.SetBits(8, 0xFF, value);
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -875,11 +1086,21 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 						Read(RegSP);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 4:
@@ -893,9 +1114,15 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 6:
-						RegPC = _tempAddress.SetBits(8, 0xFF, Read(RegPC));
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC = _tempAddress.SetBits(8, 0xFF, value);
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -911,15 +1138,32 @@ public sealed partial class MOS6502
 								Step();
 								break;
 							case 2:
-								_tempAddress = Read(RegPC++);
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = value;
 								Step();
 								break;
+							}
 							case 3:
-								_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(RegPC++));
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 								Step();
 								break;
+							}
 							case 4:
 								_tempValue = Read(_tempAddress);
+								if (!_ready)
+									break;
+
 								DoOp();
 								End();
 								break;
@@ -935,17 +1179,37 @@ public sealed partial class MOS6502
 								Step();
 								break;
 							case 2:
-								_tempAddress = Read(RegPC++);
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = value;
 								Step();
 								break;
+							}
 							case 3:
-								_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(RegPC++));
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 								Step();
 								break;
+							}
 							case 4:
-								_tempValue = Read(_tempAddress);
+							{
+								var value = Read(_tempAddress);
+								if (!_ready)
+									break;
+
+								_tempValue = value;
 								Step();
 								break;
+							}
 							case 5:
 								Write(_tempAddress, _tempValue);
 								DoOp();
@@ -967,13 +1231,27 @@ public sealed partial class MOS6502
 								Step();
 								break;
 							case 2:
-								_tempAddress = Read(RegPC++);
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = value;
 								Step();
 								break;
+							}
 							case 3:
-								_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(RegPC++));
+							{
+								var value = Read(RegPC);
+								if (!_ready)
+									break;
+
+								RegPC++;
+								_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 								Step();
 								break;
+							}
 							case 4:
 								DoOp();
 								Write(_tempAddress, _tempValue);
@@ -1004,12 +1282,24 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 					{
-						_tempValue = Read(RegPC++);
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempValue = value;
 						_tempAddress += x;
 
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
@@ -1024,11 +1314,17 @@ public sealed partial class MOS6502
 					case 4:
 						_pageBoundaryCrossed = true;
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						_tempAddress += 0x100;
 						Step();
 						break;
 					case 5:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						DoOp();
 						End();
 						break;
@@ -1044,12 +1340,23 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 					{
-						_tempValue = Read(RegPC++);
+						_tempValue = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
 						_tempAddress += x;
 
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
@@ -1059,15 +1366,23 @@ public sealed partial class MOS6502
 						break;
 					}
 					case 4:
+					{
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						if (_tempValue != 0)
 							_pageBoundaryCrossed = true;
 
 						_tempAddress += (ushort)(_tempValue << 8);
 						Step();
 						break;
+					}
 					case 5:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 6:
@@ -1091,12 +1406,24 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 					{
-						_tempValue = Read(RegPC++);
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempValue = value;
 						_tempAddress += x;
 
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
@@ -1106,10 +1433,13 @@ public sealed partial class MOS6502
 						break;
 					}
 					case 4:
+						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						if (_tempValue != 0)
 							_pageBoundaryCrossed = true;
 
-						Read(_tempAddress);
 						_tempAddress += (ushort)(_tempValue << 8);
 						Step();
 						break;
@@ -1140,14 +1470,27 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
-						_tempValue = Read(_tempAddress);
+					{
+						var value = Read(_tempAddress);
+						if (!_ready)
+							break;
+
+						_tempValue = value;
 						DoOp();
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -1160,11 +1503,21 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 4:
@@ -1188,9 +1541,16 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
 						DoOp();
 						Write(_tempAddress, _tempValue);
@@ -1218,17 +1578,32 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 3:
+					{
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						_tempAddress += x;
 						_tempAddress &= 0xFF;
 						Step();
 						break;
+					}
 					case 4:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						DoOp();
 						End();
 						break;
@@ -1244,17 +1619,28 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
 					case 3:
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						_tempAddress += x;
 						_tempAddress &= 0xFF;
 						Step();
 						break;
 					case 4:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 5:
@@ -1278,11 +1664,19 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempAddress = Read(RegPC++);
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempAddress = value;
 						Step();
 						break;
 					case 3:
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						_tempAddress += x;
 						_tempAddress &= 0xFF;
 						Step();
@@ -1313,24 +1707,50 @@ public sealed partial class MOS6502
 				Step();
 				break;
 			case 2:
-				_tempAddress = Read(RegPC++);
+			{
+				var value = Read(RegPC);
+				if (!_ready)
+					break;
+
+				RegPC++;
+				_tempAddress = value;
 				Step();
 				break;
+			}
 			case 3:
-				_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(RegPC));
+			{
+				var value = Read(RegPC);
+				if (!_ready)
+					break;
+
+				_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 				Step();
 				break;
+			}
 			case 4:
-				RegPC = Read(_tempAddress++);
+			{
+				var value = Read(_tempAddress);
+				if (!_ready)
+					break;
+
+				_tempAddress++;
+				RegPC = value;
 				if (_tempAddress.GetBits(0, 0xFF) == 0)
 					_tempAddress -= 0x100;
 
 				Step();
 				break;
+			}
 			case 5:
-				RegPC = RegPC.SetBits(8, 0xFF, Read(_tempAddress));
+			{
+				var value = Read(_tempAddress);
+				if (!_ready)
+					break;
+
+				RegPC = RegPC.SetBits(8, 0xFF, value);
 				End();
 				break;
+			}
 			default:
 				throw new UnreachableException();
 		}
@@ -1348,24 +1768,51 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
 						Read(_tempPointer);
+						if (!_ready)
+							break;
+
 						_tempPointer += RegX;
 						Step();
 						break;
 					case 4:
-						_tempAddress = Read(_tempPointer++);
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 5:
-						_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(_tempPointer++));
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 						Step();
 						break;
+					}
 					case 6:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						DoOp();
 						End();
 						break;
@@ -1381,26 +1828,55 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
 						Read(_tempPointer);
+						if (!_ready)
+							break;
+
 						_tempPointer += RegX;
 						Step();
 						break;
 					case 4:
-						_tempAddress = _tempAddress.SetBits(0, 0xFF, Read(_tempPointer++));
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = _tempAddress.SetBits(0, 0xFF, value);
 						Step();
 						break;
+					}
 					case 5:
-						_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(_tempPointer++));
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 						Step();
 						break;
+					}
 					case 6:
+					{
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
+					}
 					case 7:
 						Write(_tempAddress, _tempValue);
 						DoOp();
@@ -1422,22 +1898,47 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
 						Read(_tempPointer);
+						if (!_ready)
+							break;
+
 						_tempPointer += RegX;
 						Step();
 						break;
 					case 4:
-						_tempAddress = _tempAddress.SetBits(0, 0xFF, Read(_tempPointer++));
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = _tempAddress.SetBits(0, 0xFF, value);
 						Step();
 						break;
+					}
 					case 5:
-						_tempAddress = _tempAddress.SetBits(8, 0xFF, Read(_tempPointer++));
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = _tempAddress.SetBits(8, 0xFF, value);
 						Step();
 						break;
+					}
 					case 6:
 						DoOp();
 						Write(_tempAddress, _tempValue);
@@ -1465,16 +1966,33 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
-						_tempAddress = Read(_tempPointer++);
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 4:
 					{
 						_tempValue = Read(_tempPointer);
+						if (!_ready)
+							break;
+
 						_tempAddress += RegY;
 
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
@@ -1487,16 +2005,26 @@ public sealed partial class MOS6502
 						break;
 					}
 					case 5:
-						_pageBoundaryCrossed = true;
+					{
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
+						_pageBoundaryCrossed = true;
 						_tempAddress += 0x100;
 						Step();
 						break;
+					}
 					case 6:
+					{
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						DoOp();
 						End();
 						break;
+					}
 					default:
 						throw new UnreachableException();
 				}
@@ -1509,18 +2037,34 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
-						_tempAddress = Read(_tempPointer++);
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 4:
 					{
 						_tempValue = Read(_tempPointer);
-						_tempAddress += RegY;
+						if (!_ready)
+							break;
 
+						_tempAddress += RegY;
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
 						_tempAddress = _tempAddress.SetBits(8, 0xFF, _tempValue);
 						_tempValue = hi;
@@ -1528,15 +2072,21 @@ public sealed partial class MOS6502
 						break;
 					}
 					case 5:
+						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						if (_tempValue != 0)
 							_pageBoundaryCrossed = true;
 
-						Read(_tempAddress);
 						_tempAddress += (ushort)(_tempValue << 8);
 						Step();
 						break;
 					case 6:
 						_tempValue = Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						Step();
 						break;
 					case 7:
@@ -1560,18 +2110,34 @@ public sealed partial class MOS6502
 						Step();
 						break;
 					case 2:
-						_tempPointer = Read(RegPC++);
+					{
+						var value = Read(RegPC);
+						if (!_ready)
+							break;
+
+						RegPC++;
+						_tempPointer = value;
 						Step();
 						break;
+					}
 					case 3:
-						_tempAddress = Read(_tempPointer++);
+					{
+						var value = Read(_tempPointer);
+						if (!_ready)
+							break;
+
+						_tempPointer++;
+						_tempAddress = value;
 						Step();
 						break;
+					}
 					case 4:
 					{
 						_tempValue = Read(_tempPointer);
-						_tempAddress += RegY;
+						if (!_ready)
+							break;
 
+						_tempAddress += RegY;
 						var hi = (byte)_tempAddress.GetBits(8, 0xFF);
 						_tempAddress = _tempAddress.SetBits(8, 0xFF, _tempValue);
 						_tempValue = hi;
@@ -1583,6 +2149,9 @@ public sealed partial class MOS6502
 							_pageBoundaryCrossed = true;
 
 						Read(_tempAddress);
+						if (!_ready)
+							break;
+
 						_tempAddress += (ushort)(_tempValue << 8);
 						Step();
 						break;
