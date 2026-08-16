@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Silly6502/Silly6502.csproj" />
+  <Project Path="Test/Test.csproj" />
+  <Project Path="Util\Util.csproj" />
+</Solution>

@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<PublishAot>true</PublishAot>
+		<OptimizationPreference>Speed</OptimizationPreference>
+		<!--<IlcInstructionSet>x86-64-v3</IlcInstructionSet>-->
+		<IlcInstructionSet>native</IlcInstructionSet>
+		<ServerGarbageCollection>false</ServerGarbageCollection>
+		<TieredPGO>true</TieredPGO>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Silly6502\Silly6502.csproj"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="Tests\**">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>
