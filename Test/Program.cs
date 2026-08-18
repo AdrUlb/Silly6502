@@ -194,8 +194,8 @@ static void TestSpinSpeed()
 
 	cpu.Reset();
 
-	// Execute a few ticks to clear the reset sequence
-	for (var i = 0; i < 7; i++) cpu.Tick();
+	for (var i = 0; i < 7; i++)
+		cpu.Tick();
 
 	const long testCycles = 100_000_000L;
 	var sw = Stopwatch.StartNew();
@@ -205,5 +205,9 @@ static void TestSpinSpeed()
 
 	sw.Stop();
 
-	Console.WriteLine($"Speed: {testCycles * 1000.0 / sw.Elapsed.TotalMilliseconds:N0} cycles/sec");
+	var elapsedMillis = sw.Elapsed.TotalMilliseconds;
+
+	Console.WriteLine($"Time: {elapsedMillis:F2}ms");
+	Console.WriteLine($"Cycles: {testCycles}");
+	Console.WriteLine($"Speed: {testCycles * 1000.0 / elapsedMillis:N0} cycles/sec");
 }
