@@ -20,10 +20,4 @@
 		<ProjectReference Include="..\Silly6502\Silly6502.csproj"/>
 	</ItemGroup>
 
-	<ItemGroup>
-		<None Update="Tests\**">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</None>
-	</ItemGroup>
-
 </Project>

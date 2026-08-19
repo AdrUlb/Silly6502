@@ -1,8 +1,8 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
+using SillyUtil.Extensions;
 using Test;
 using Test.SingleStepTests;
-using Util.Extensions;
 using CPU = Silly6502.MOS6502;
 
 var files = Directory.GetFiles("Tests/SingleStepTests/6502/v1", "*.json");
@@ -97,7 +97,7 @@ void RunTest(TestDataTest test)
 		bus.Ram[ram.Address] = ram.Value;
 
 	sw.Start();
-	
+
 	foreach (var cycle in test.Cycles)
 	{
 		done = false;

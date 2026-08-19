@@ -1,12 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using Util.Extensions;
+using SillyUtil.Extensions;
 
 namespace Silly6502;
 
 public sealed partial class MOS6502
 {
-
 	public const ushort VectorIrq = 0xFFFE;
 	public const ushort VectorNmi = 0xFFFA;
 	public const ushort VectorReset = 0xFFFC;
@@ -60,7 +59,6 @@ public sealed partial class MOS6502
 	{
 		_bus = bus;
 		Enable6510Ports = enable6510Ports;
-		Reset();
 	}
 
 	// The IRQ line must be continuously asserted every tick until the interrupt has been acknowledged, it is reset after every tick.
