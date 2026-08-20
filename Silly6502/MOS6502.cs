@@ -4,7 +4,7 @@ using SillyUtil.Extensions;
 
 namespace Silly6502;
 
-public sealed partial class MOS6502
+public sealed partial class MOS6502(IAddressBus bus, bool enable6510Ports = false)
 {
 	public const ushort VectorIrq = 0xFFFE;
 	public const ushort VectorNmi = 0xFFFA;
@@ -30,15 +30,13 @@ public sealed partial class MOS6502
 	public bool FlagOverflow { get => RegStatus.GetBit(6); set => RegStatus = RegStatus.SetBit(6, value); }
 	public bool FlagNegative { get => RegStatus.GetBit(7); set => RegStatus = RegStatus.SetBit(7, value); }
 
-	public bool Enable6510Ports { get; }
+	public bool Enable6510Ports { get; } = enable6510Ports;
 	public bool BusRead { get; private set; }
 	public ushort BusAddress { get; private set; }
 	public byte BusData { get; private set; }
 	public byte PortDataIn { get; set; }
 	public byte PortDataOut { get; private set; }
 	public byte RegDataDir { get; set; }
-
-	private readonly IAddressBus _bus;
 
 	private bool _latchNmi = false;
 	private bool _latchReset = false;
@@ -55,12 +53,6 @@ public sealed partial class MOS6502
 	private byte _tempValue;
 	private bool _pageBoundaryCrossed;
 
-	public MOS6502(IAddressBus bus, bool enable6510Ports = false)
-	{
-		_bus = bus;
-		Enable6510Ports = enable6510Ports;
-	}
-
 	// The IRQ line must be continuously asserted every tick until the interrupt has been acknowledged, it is reset after every tick.
 	private bool _requestIrq, _nextRequestIrq;
 	private bool _requestNmi, _nextRequestNmi;
@@ -72,6 +64,8 @@ public sealed partial class MOS6502
 	public bool Ready { get => _ready; set => _nextReady = value; }
 	public bool Sync { get; private set; }
 	public bool AddressEnable { get => _addressEnable; set => _nextAddressEnable = value; }
+
+	public bool Jammed { get; private set; }
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public void Reset()
@@ -85,6 +79,9 @@ public sealed partial class MOS6502
 		_latchNmi = false;
 		_brkIrq = true;
 		_step = 1;
+
+		Jammed = false;
+		RegPC = 0;
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -101,7 +98,7 @@ public sealed partial class MOS6502
 
 			BusRead = true;
 			BusAddress = address;
-			BusData = _bus.Read(address);
+			BusData = bus.Read(address);
 		}
 
 		if (!Enable6510Ports)
@@ -134,7 +131,7 @@ public sealed partial class MOS6502
 			BusRead = false;
 			BusAddress = address;
 			BusData = data;
-			_bus.Write(address, data);
+			bus.Write(address, data);
 		}
 
 		if (!Enable6510Ports)
@@ -164,6 +161,7 @@ public sealed partial class MOS6502
 
 		Sync = true;
 		InstructionFinished?.Invoke();
+		bus.SetConfirmedOpcodeAt(RegPC, true);
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -218,33 +216,47 @@ public sealed partial class MOS6502
 			Sync = false;
 		}
 
-		TickInstruction();
+		TickAddressingMode();
+	}
+
+	public int TickInstruction()
+	{
+		var cycles = 0;
+
+		do
+		{
+			Tick();
+			cycles++;
+		}
+		while (_step != 1);
+
+		return cycles;
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstruction()
+	private void TickAddressingMode()
 	{
 		switch (_instruction.AddressingMode)
 		{
-			case AddressingMode.Implied: TickInstructionImplied(); break;
-			case AddressingMode.Accumulator: TickInstructionAccumulator(); break;
-			case AddressingMode.Immediate: TickInstructionImmediate(); break;
-			case AddressingMode.Relative: TickInstructionRelative(); break;
-			case AddressingMode.Absolute: TickInstructionAbsolute(); break;
-			case AddressingMode.AbsoluteXIndexed: TickInstructionAbsoluteIndexed(RegX); break;
-			case AddressingMode.AbsoluteYIndexed: TickInstructionAbsoluteIndexed(RegY); break;
-			case AddressingMode.Zeropage: TickInstructionZeropage(); break;
-			case AddressingMode.ZeropageXIndexed: TickInstructionZeropageIndexed(RegX); break;
-			case AddressingMode.ZeropageYIndexed: TickInstructionZeropageIndexed(RegY); break;
-			case AddressingMode.Indirect: TickInstructionIndirect(); break;
-			case AddressingMode.XIndexedIndirect: TickInstructionXIndexedIndirect(); break;
-			case AddressingMode.IndirectYIndexed: TickInstructionIndirectYIndexed(); break;
+			case AddressingMode.Implied: TickAddressingModeImplied(); break;
+			case AddressingMode.Accumulator: TickAddressingModeAccumulator(); break;
+			case AddressingMode.Immediate: TickAddressingModeImmediate(); break;
+			case AddressingMode.Relative: TickAddressingModeRelative(); break;
+			case AddressingMode.Absolute: TickAddressingModeAbsolute(); break;
+			case AddressingMode.AbsoluteXIndexed: TickAddressingModeAbsoluteIndexed(RegX); break;
+			case AddressingMode.AbsoluteYIndexed: TickAddressingModeAbsoluteIndexed(RegY); break;
+			case AddressingMode.Zeropage: TickAddressingModeZeropage(); break;
+			case AddressingMode.ZeropageXIndexed: TickAddressingModeZeropageIndexed(RegX); break;
+			case AddressingMode.ZeropageYIndexed: TickAddressingModeZeropageIndexed(RegY); break;
+			case AddressingMode.Indirect: TickAddressingModeIndirect(); break;
+			case AddressingMode.XIndexedIndirect: TickAddressingModeXIndexedIndirect(); break;
+			case AddressingMode.IndirectYIndexed: TickAddressingModeIndirectYIndexed(); break;
 			default: throw new UnreachableException();
 		}
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionImplied()
+	private void TickAddressingModeImplied()
 	{
 		switch (_instruction.Operation)
 		{
@@ -979,6 +991,7 @@ public sealed partial class MOS6502
 						break;
 					case 6:
 						Read(0xFFFF);
+						Jammed = true;
 						break;
 					default:
 						throw new UnreachableException();
@@ -991,7 +1004,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionAccumulator()
+	private void TickAddressingModeAccumulator()
 	{
 		switch (_step)
 		{
@@ -1014,7 +1027,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionImmediate()
+	private void TickAddressingModeImmediate()
 	{
 		switch (_step)
 		{
@@ -1036,7 +1049,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionRelative()
+	private void TickAddressingModeRelative()
 	{
 		switch (_step)
 		{
@@ -1099,7 +1112,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionAbsolute()
+	private void TickAddressingModeAbsolute()
 	{
 		switch (_instruction.Operation)
 		{
@@ -1327,7 +1340,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionAbsoluteIndexed(byte x)
+	private void TickAddressingModeAbsoluteIndexed(byte x)
 	{
 		switch (_instruction.MemoryAccess)
 		{
@@ -1515,7 +1528,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionZeropage()
+	private void TickAddressingModeZeropage()
 	{
 		switch (_instruction.MemoryAccess)
 		{
@@ -1623,7 +1636,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionZeropageIndexed(byte x)
+	private void TickAddressingModeZeropageIndexed(byte x)
 	{
 		switch (_instruction.MemoryAccess)
 		{
@@ -1753,7 +1766,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionIndirect()
+	private void TickAddressingModeIndirect()
 	{
 		Debug.Assert(_instruction.Operation == Operation.Jmp);
 
@@ -1813,7 +1826,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionXIndexedIndirect()
+	private void TickAddressingModeXIndexedIndirect()
 	{
 		switch (_instruction.MemoryAccess)
 		{
@@ -2011,7 +2024,7 @@ public sealed partial class MOS6502
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private void TickInstructionIndirectYIndexed()
+	private void TickAddressingModeIndirectYIndexed()
 	{
 		switch (_instruction.MemoryAccess)
 		{
