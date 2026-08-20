@@ -63,6 +63,8 @@ public sealed partial class MOS6502(IAddressBus bus, bool enable6510Ports = fals
 	public bool RequestNmi { get => _requestNmi; set => _nextRequestNmi = value; }
 	public bool Ready { get => _ready; set => _nextReady = value; }
 	public bool Sync { get; private set; }
+	
+	// NOTE: in hardware this signal is active low, as such true => AEC=0, false => AEC=1
 	public bool AddressEnable { get => _addressEnable; set => _nextAddressEnable = value; }
 
 	public bool Jammed { get; private set; }
